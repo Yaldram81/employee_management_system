@@ -1,0 +1,956 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String   @default("#10b981")
+  icon        String   @default("Building2")
+  location    String?
+  budget      Float?
+  managerId   String?  @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  manager    User?       @relation("DepartmentManager", fields: [managerId], references: [id])
+  users      User[]
+  tasks      Task[]
+  requests   Request[]
+  complaints Complaint[]
+  teams      Team[]
+  jobPostings JobPosting[]
+  onboardingPlans OnboardingPlan[]
+  lifecycleEvents LifecycleEvent[]
+  challenges  TeamChallenge[]
+
+  @@map("departments")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("EMPLOYEE") // ADMIN, MANAGER, EMPLOYEE
+  departmentId String?
+  pinCode      String?
+  faceVector   String?  // JSON array of 512 floats
+  avatarUrl    String?
+  phone        String?
+  position     String?
+  joinDate     DateTime?
+  salary       Float?
+  isActive     Boolean  @default(true)
+  shiftId      String?
+  workMode     String   @default("OFFICE") // OFFICE, REMOTE, HYBRID
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department         Department?        @relation(fields: [departmentId], references: [id])
+  shift              Shift?             @relation(fields: [shiftId], references: [id])
+  managedDepartment  Department?        @relation("DepartmentManager")
+  attendance         Attendance[]
+  attendanceLogs     AttendanceLog[]
+  leaves             Leave[]
+  assignedTasks      Task[]             @relation("TaskAssignee")
+  reportedTasks      Task[]             @relation("TaskReporter")
+  requests           Request[]
+  complaints         Complaint[]
+  assignedComplaints Complaint[]       @relation("ComplaintAssignee")
+  resolvedComplaints Complaint[]       @relation("ComplaintResolver")
+  escalatedComplaints Complaint[]      @relation("ComplaintEscalator")
+  notifications      Notification[]
+  approvedLeaves     Leave[]            @relation("LeaveApprover")
+  reviewedRequests   Request[]          @relation("RequestReviewer")
+  payrollRecords     PayrollRecord[]
+  reviewedPayroll    PayrollRecord[]    @relation("PayrollReviewer")
+  approvedPayroll    PayrollRecord[]    @relation("PayrollApprover")
+  salaryStructure    SalaryStructure?
+  editedAttendance   Attendance[]       @relation("AttendanceEditor")
+  editedAttendanceLogs AttendanceLog[]  @relation("AttendanceLogEditor")
+  leaveBalances      LeaveBalance[]
+  teamMembers        TeamMember[]
+  taskComments       TaskComment[]
+  onboardingBuddy    OnboardingPlan[]  @relation("OnboardingBuddy")
+  onboardingMentor   OnboardingPlan[]  @relation("OnboardingMentor")
+  performanceReviews PerformanceReview[] @relation("PerformanceReviewedUser")
+  performanceReviewer PerformanceReview[] @relation("PerformanceReviewer")
+  lifecycleEvents    LifecycleEvent[]  @relation("LifecycleUser")
+  lifecycleApprover  LifecycleEvent[]  @relation("LifecycleApprover")
+  trainingEnrollments TrainingEnrollment[]
+  employeeDocuments  EmployeeDocument[]
+  loginSessions      LoginSession[]
+  investmentDeclarations InvestmentDeclaration[]
+  reviewedInvestments    InvestmentDeclaration[] @relation("InvestmentReviewer")
+  badges                 UserBadge[]
+  kudosSent              Kudos[]               @relation("KudosSender")
+  kudosReceived          Kudos[]               @relation("KudosReceiver")
+  streakRecords          StreakRecord[]
+  challengeMembers       TeamChallengeMember[]  @relation("ChallengeMember")
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Raw Punches — Every single clock event, never overwritten
+// ─────────────────────────────────────────────────────────────
+model AttendanceLog {
+  id           String   @id @default(cuid())
+  userId       String
+  punchType    String   // CLOCK_IN, CLOCK_OUT, BREAK_START, BREAK_END
+  punchTime    DateTime // Exact timestamp of the event
+  method       String   @default("PIN") // FACE, PIN, MANUAL, WEB
+  confidence   Float?   // Face recognition confidence (0-1)
+  ipAddress    String?  // Client IP for verification
+  gpsLatitude  Float?   // For remote/WFH punches
+  gpsLongitude Float?   // For remote/WFH punches
+  gpsAccuracy  Float?   // GPS accuracy in meters
+  locationName String?  // Human-readable location label (e.g. "Office", "Home", "Unknown")
+  deviceId     String?  // Browser fingerprint or device ID
+  isFlagged    Boolean  @default(false) // Flagged for manager review
+  flagReason   String?  // e.g. "IP_NOT_IN_OFFICE_NETWORK", "OUTSIDE_GEOFENCE"
+  isBreak      Boolean  @default(false) // True for BREAK_START / BREAK_END punches
+  editedBy     String?  // If manager manually inserted, their userId
+  createdAt    DateTime @default(now())
+
+  user      User  @relation(fields: [userId], references: [id])
+  editor    User? @relation("AttendanceLogEditor", fields: [editedBy], references: [id])
+
+  @@map("attendance_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Calculated Timesheet — Summary produced by the calculation engine
+// ─────────────────────────────────────────────────────────────
+model Attendance {
+  id            String   @id @default(cuid())
+  userId        String
+  date          String   // YYYY-MM-DD
+  firstIn       String?  // HH:MM:SS — earliest CLOCK_IN of the day
+  lastOut       String?  // HH:MM:SS — latest CLOCK_OUT of the day
+  totalHours    Float?   // Calculated hours (lastOut - firstIn minus breaks)
+  breakMinutes  Int      @default(0) // Total break minutes for the day
+  status        String   @default("ABSENT") // PRESENT, ABSENT, LATE, HALF_DAY, HOLIDAY, WEEKEND
+  method        String   @default("PIN")    // Primary method used (FACE, PIN, MANUAL, WEB)
+  overtimeHours Float?   // Hours beyond standard shift
+  workMode      String?  // OFFICE, REMOTE, HYBRID — detected or set at clock-in
+  gpsLatitude   Float?   // GPS lat at first clock-in
+  gpsLongitude  Float?   // GPS lng at first clock-in
+  locationName  String?  // Detected location name
+  isGeofenceOk  Boolean? // True if punch was within office geofence
+  isEdited      Boolean  @default(false)    // Was this manually adjusted?
+  editedBy      String?  // Who edited it
+  editedAt      DateTime?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user   User  @relation(fields: [userId], references: [id])
+  editor User? @relation("AttendanceEditor", fields: [editedBy], references: [id])
+
+  @@unique([userId, date])
+  @@map("attendance")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shift Definitions — Configurable work schedules
+// ─────────────────────────────────────────────────────────────
+model Shift {
+  id          String   @id @default(cuid())
+  name        String   // e.g. "Standard", "Morning", "Night"
+  startTime   String   // HH:MM (e.g. "09:00")
+  endTime     String   // HH:MM (e.g. "17:00")
+  gracePeriod Int      @default(15) // Minutes after startTime still considered "on time"
+  halfDayMin  Float    @default(4.5) // Minimum hours for a full day; less = half-day
+  overtimeThreshold Float @default(9) // Hours beyond this count as OT
+  isDefault   Boolean  @default(false) // Only one default shift
+  color       String   @default("#10b981") // UI accent color for the shift
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+
+  @@map("shifts")
+}
+
+model Leave {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // SICK, CASUAL, VACATION
+  startDate   String   // YYYY-MM-DD
+  endDate     String   // YYYY-MM-DD
+  reason      String
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  managerId   String?
+  reviewedAt  DateTime?
+  attachmentUrl String? // S3/local storage path for doctor notes etc.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User  @relation(fields: [userId], references: [id])
+  manager User? @relation("LeaveApprover", fields: [managerId], references: [id])
+
+  @@map("leaves")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Leave Policies — Rules for each leave type (sick, casual, etc.)
+// ─────────────────────────────────────────────────────────────
+model LeavePolicy {
+  id                   String   @id @default(cuid())
+  name                 String   @unique // e.g. "Sick Leave", "Casual Leave"
+  type                 String   // SICK, CASUAL, VACATION, MATERNITY, PATERNITY, UNPAID
+  annualQuota          Int      @default(10) // Days per year
+  requiresApproval     Boolean  @default(true)
+  requiresDocument     Boolean  @default(false) // Doc upload required after N days
+  documentThresholdDays Int     @default(3) // Days after which doc is required
+  carriesForward       Boolean  @default(false) // Can unused leaves roll over?
+  maxCarryForward      Int      @default(0) // Max days that can roll over
+  isEncashable         Boolean  @default(false) // Can unused leaves be paid out?
+  isPaid               Boolean  @default(true)
+  color                String   @default("#10b981") // UI color for timeline
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("leave_policies")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Company Holidays — Global non-working days
+// ─────────────────────────────────────────────────────────────
+model CompanyHoliday {
+  id          String   @id @default(cuid())
+  name        String   // e.g. "Christmas", "Eid ul-Fitr"
+  date        String   // YYYY-MM-DD
+  type        String   @default("PUBLIC") // PUBLIC, COMPANY, OPTIONAL
+  isRecurring Boolean  @default(false) // Repeats every year?
+  createdAt   DateTime @default(now())
+
+  @@unique([date])
+  @@map("company_holidays")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Leave Balance — Per-user per-type leave allocation tracking
+// ─────────────────────────────────────────────────────────────
+model LeaveBalance {
+  id           String   @id @default(cuid())
+  userId       String
+  leaveType    String   // SICK, CASUAL, VACATION, etc.
+  total        Int      @default(0) // Total allocated days
+  used         Int      @default(0) // Days used (approved)
+  carriedForward Int    @default(0) // Days carried from previous year
+  year         Int      // e.g. 2025
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, leaveType, year])
+  @@map("leave_balances")
+}
+
+model Task {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  assigneeId      String?
+  reporterId      String?
+  teamId          String?
+  departmentId    String?
+  parentTaskId    String?  // For epics → sub-tasks hierarchy
+  status          String   @default("TODO") // TODO, IN_PROGRESS, IN_REVIEW, DONE, BLOCKED
+  priority        String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  dueDate         String?  // YYYY-MM-DD
+  isBlocked       Boolean  @default(false)
+  blockedReason   String?
+  performanceScore Float?  // 0-100 score after completion
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignee   User?       @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  reporter   User?       @relation("TaskReporter", fields: [reporterId], references: [id])
+  team       Team?       @relation(fields: [teamId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  parentTask Task?       @relation("TaskHierarchy", fields: [parentTaskId], references: [id])
+  subTasks   Task[]      @relation("TaskHierarchy")
+  comments   TaskComment[]
+  blockingDeps  TaskDependency[] @relation("TaskBlocks")
+  dependentDeps TaskDependency[] @relation("TaskDependsOn")
+
+  @@map("tasks")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Task Dependencies — Blocked-by relationships
+// ─────────────────────────────────────────────────────────────
+model TaskDependency {
+  id              String   @id @default(cuid())
+  taskId          String   // The task that is blocked
+  dependsOnTaskId String   // The task it depends on (must be done first)
+  createdAt       DateTime @default(now())
+
+  task          Task @relation("TaskBlocks", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask Task @relation("TaskDependsOn", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@map("task_dependencies")
+}
+
+model Request {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String   // LEAVE, EXPENSE, ASSET, SHIFT_SWAP, TRAINING, EQUIPMENT, TRAVEL, IT_SUPPORT
+  title           String   @default("")
+  description     String   @default("")
+  amount          Float?   // For expense/travel requests
+  priority        String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status          String   @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED, CANCELLED, ESCALATED
+  payload         String   // JSON string for dynamic form data (extensible)
+  departmentId    String?
+  reviewerId      String?
+  reviewedAt      DateTime?
+  reviewComment   String?
+  dueDate         String?  // YYYY-MM-DD
+  attachmentUrls  String?  // JSON array of URLs
+  resolvedAt      DateTime?
+  cancelledAt     DateTime?
+  escalatedAt     DateTime?
+  escalatedBy     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user       User?       @relation(fields: [userId], references: [id])
+  reviewer   User?       @relation("RequestReviewer", fields: [reviewerId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  @@map("requests")
+}
+
+model Complaint {
+  id              String   @id @default(cuid())
+  userId          String?  // Nullable for anonymous
+  subject         String
+  description     String
+  category        String   @default("GENERAL") // HR, IT, FACILITIES, FINANCE, MANAGEMENT, SECURITY, GENERAL, OTHER
+  priority        String   @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  status          String   @default("OPEN") // OPEN, INVESTIGATING, IN_PROGRESS, RESOLVED, CLOSED, ESCALATED
+  resolutionNotes String?
+  isAnonymous     Boolean  @default(false)
+  departmentId    String?
+  assignedToId    String?  // Who is handling the complaint
+  resolvedById    String?  // Who resolved it
+  resolvedAt      DateTime?
+  escalatedAt     DateTime?
+  escalatedById   String?
+  closedAt        DateTime?
+  dueDate         String?  // YYYY-MM-DD SLA target
+  attachmentUrls  String?  // JSON array of URLs
+  severity        String   @default("NORMAL") // NORMAL, SENSITIVE, CRITICAL
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user       User?       @relation(fields: [userId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  assignee   User?       @relation("ComplaintAssignee", fields: [assignedToId], references: [id])
+  resolver   User?       @relation("ComplaintResolver", fields: [resolvedById], references: [id])
+  escalator  User?       @relation("ComplaintEscalator", fields: [escalatedById], references: [id])
+
+  @@map("complaints")
+}
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String   // APPROVAL_REQUIRED, ATTENDANCE, LEAVE_UPDATE, TASK_ASSIGNED, COMPLAINT_UPDATE, GENERAL
+  title      String
+  message    String
+  isRead     Boolean  @default(false)
+  actionUrl  String?
+  actionData String?  // JSON: { entityType: 'leave'|'request'|'task', entityId: string, actions: ['approve','reject'] }
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model SystemRule {
+  id            String   @id @default(cuid())
+  name          String
+  triggerEvent  String   // LATE_CLOCK_IN, TASK_COMPLETED, MONTH_END
+  conditionCount Int     @default(1)
+  action        String   // DEDUCT_LEAVE, BOOST_PERFORMANCE, LOCK_ATTENDANCE
+  actionValue   String?  // JSON for action parameters
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("system_rules")
+}
+
+model SystemSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String // JSON string
+
+  @@map("system_settings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Office Geofences — Define allowed clock-in areas
+// ─────────────────────────────────────────────────────────────
+model OfficeGeofence {
+  id          String   @id @default(cuid())
+  name        String   // e.g. "Main Office", "Branch Office"
+  latitude    Float    // Center latitude
+  longitude   Float    // Center longitude
+  radiusMeters Int     @default(200) // Geofence radius in meters
+  address     String?  // Human-readable address
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("office_geofences")
+}
+
+model PayrollRecord {
+  id              String   @id @default(cuid())
+  userId          String
+  month           String   // YYYY-MM
+  baseSalary      Float
+  overtime        Float    @default(0)
+  allowances      Float    @default(0)   // Housing, transport, etc.
+  bonus           Float    @default(0)
+  tax             Float    @default(0)   // Income tax
+  insurance       Float    @default(0)   // Health/life insurance
+  providentFund   Float    @default(0)   // PF/401k contribution
+  otherDeductions Float    @default(0)   // Loans, advances, etc.
+  deductions      Float    @default(0)   // Total deductions (computed: tax+insurance+pf+other)
+  grossSalary     Float    @default(0)   // baseSalary + overtime + allowances + bonus
+  netSalary       Float
+  status          String   @default("DRAFT") // DRAFT, REVIEWED, APPROVED, PAID, ON_HOLD, CANCELLED
+  paymentMethod   String   @default("BANK_TRANSFER") // BANK_TRANSFER, CASH, CHECK, DIGITAL_WALLET
+  bankName        String?
+  bankAccount     String?
+  notes           String?  // JSON string for itemized breakdown & notes
+  reviewedById    String?
+  reviewedAt      DateTime?
+  approvedById    String?
+  approvedAt      DateTime?
+  generatedAt     DateTime @default(now())
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user     User  @relation(fields: [userId], references: [id])
+  reviewer User? @relation("PayrollReviewer", fields: [reviewedById], references: [id])
+  approver User? @relation("PayrollApprover", fields: [approvedById], references: [id])
+
+  @@unique([userId, month])
+  @@map("payroll_records")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Teams — Cross-department groups for task assignment
+// ─────────────────────────────────────────────────────────────
+model Team {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  color        String   @default("#10b981")
+  icon         String   @default("UsersRound")
+  departmentId String?
+  createdBy    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  members    TeamMember[]
+  tasks      Task[]
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id     String @id @default(cuid())
+  teamId String
+  userId String
+  role   String @default("MEMBER") // LEAD, MEMBER
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Task Comments — Discussion thread per task
+// ─────────────────────────────────────────────────────────────
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  comment   String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("task_comments")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Task Templates — Reusable task blueprints
+// ─────────────────────────────────────────────────────────────
+model TaskTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String
+  taskItems   String   // JSON array of task item strings
+  isActive    Boolean  @default(true)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("task_templates")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Salary Structure — Per-employee salary configuration
+// ─────────────────────────────────────────────────────────────
+model SalaryStructure {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  baseSalary        Float
+  housingAllowance  Float    @default(0)
+  transportAllowance Float   @default(0)
+  medicalAllowance  Float    @default(0)
+  foodAllowance     Float    @default(0)
+  otherAllowances   Float    @default(0)
+  overtimeRate      Float    @default(0)    // Per hour overtime rate
+  taxPercentage     Float    @default(0)    // Income tax %
+  insuranceRate     Float    @default(0)    // Insurance % of base
+  providentFundRate Float    @default(0)    // PF % of base
+  effectiveFrom     String   // YYYY-MM-DD
+  effectiveTo       String?  // YYYY-MM-DD, null = current
+  bankName          String?
+  bankAccount       String?
+  paymentMethod     String   @default("BANK_TRANSFER") // BANK_TRANSFER, CASH, CHECK, DIGITAL_WALLET
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("salary_structures")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Job Postings
+// ─────────────────────────────────────────────────────────────
+model JobPosting {
+  id            String   @id @default(cuid())
+  title         String
+  departmentId  String?
+  type          String   @default("FULL_TIME") // FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
+  status        String   @default("DRAFT") // DRAFT, OPEN, PAUSED, CLOSED, FILLED
+  salaryMin     Float?
+  salaryMax     Float?
+  location      String   @default("On-site")
+  experience    String   @default("")
+  skills        String   @default("[]") // JSON array of strings
+  description   String?
+  imageUrl      String?  // Path to uploaded ad image / banner
+  postedDate    String?  // YYYY-MM-DD
+  closingDate   String?  // YYYY-MM-DD
+  applicantCount Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  candidates Candidate[]
+
+  @@map("job_postings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Candidates
+// ─────────────────────────────────────────────────────────────
+model Candidate {
+  id            String   @id @default(cuid())
+  name          String
+  email         String
+  phone         String?
+  jobPostingId  String
+  stage         String   @default("APPLIED") // APPLIED, SCREENING, INTERVIEW, ASSESSMENT, OFFER, HIRED, REJECTED
+  rating        Float    @default(0) // 0-5
+  source        String   @default("OTHER") // REFERRAL, LINKEDIN, WEBSITE, JOB_BOARD, AGENCY, OTHER
+  appliedDate   String   // YYYY-MM-DD
+  notes         String?
+  avatar        String?
+  resumeUrl     String?
+  interviewDate String?  // YYYY-MM-DD
+  offerAmount   Float?
+  rejectedReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+
+  @@map("candidates")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Training Programs
+// ─────────────────────────────────────────────────────────────
+model TrainingProgram {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  category        String   @default("TECHNICAL") // TECHNICAL, LEADERSHIP, COMPLIANCE, SOFT_SKILLS, SAFETY, ONBOARDING
+  format          String   @default("ONLINE") // ONLINE, IN_PERSON, HYBRID, SELF_PACED
+  duration        String   @default("")
+  enrollmentCount Int      @default(0)
+  maxEnrollment   Int?
+  rating          Float    @default(0) // 0-5
+  status          String   @default("UPCOMING") // UPCOMING, ACTIVE, COMPLETED, ARCHIVED
+  hasCertification Boolean @default(false)
+  startDate       String   // YYYY-MM-DD
+  endDate         String?  // YYYY-MM-DD
+  instructor      String?
+  curriculum      String?  // JSON array of curriculum sessions
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  enrollments TrainingEnrollment[]
+
+  @@map("training_programs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Training Enrollments
+// ─────────────────────────────────────────────────────────────
+model TrainingEnrollment {
+  id              String   @id @default(cuid())
+  trainingProgramId String
+  userId          String
+  status          String   @default("ENROLLED") // ENROLLED, IN_PROGRESS, COMPLETED, CANCELLED, FAILED
+  enrolledAt      DateTime @default(now())
+  completedAt     DateTime?
+  score           Float?   // 0-100
+  certificateUrl  String?
+  feedback        String?
+
+  trainingProgram TrainingProgram @relation(fields: [trainingProgramId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id])
+
+  @@unique([trainingProgramId, userId])
+  @@map("training_enrollments")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Onboarding Plans
+// ─────────────────────────────────────────────────────────────
+model OnboardingPlan {
+  id          String   @id @default(cuid())
+  userId      String?  // Link to user once hired, null for pending hires
+  employeeName String  // Name (may differ from user if pending)
+  email       String?
+  departmentId String?
+  startDate   String   // YYYY-MM-DD
+  endDate     String?  // YYYY-MM-DD
+  progress    Float    @default(0) // 0-100
+  status      String   @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, COMPLETED, OVERDUE
+  buddyId     String?  // User ID of buddy
+  mentorId    String?  // User ID of mentor
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  department Department?     @relation(fields: [departmentId], references: [id])
+  buddy      User?           @relation("OnboardingBuddy", fields: [buddyId], references: [id])
+  mentor     User?           @relation("OnboardingMentor", fields: [mentorId], references: [id])
+  tasks      OnboardingTask[]
+
+  @@map("onboarding_plans")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Onboarding Tasks
+// ─────────────────────────────────────────────────────────────
+model OnboardingTask {
+  id            String   @id @default(cuid())
+  onboardingPlanId String
+  title         String
+  category      String   @default("SETUP") // DOCUMENTATION, SETUP, TRAINING, INTRODUCTION, REVIEW
+  isCompleted   Boolean  @default(false)
+  dueDay        Int      @default(1) // Day number from start
+  completedAt   DateTime?
+  notes         String?
+  assignedToId  String?  // User ID who is responsible
+
+  onboardingPlan OnboardingPlan @relation(fields: [onboardingPlanId], references: [id], onDelete: Cascade)
+
+  @@map("onboarding_tasks")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Performance Reviews
+// ─────────────────────────────────────────────────────────────
+model PerformanceReview {
+  id              String   @id @default(cuid())
+  userId          String
+  cycleName       String
+  status          String   @default("NOT_STARTED") // NOT_STARTED, SELF_ASSESSMENT, MANAGER_REVIEW, CALIBRATION, COMPLETED
+  rating          Float    @default(0) // 0-5
+  goalScore       Float?
+  competencyScore Float?
+  reviewerId      String?
+  dueDate         String   // YYYY-MM-DD
+  completedAt     DateTime?
+  selfAssessment  String?  // JSON for self-assessment data
+  managerFeedback String?  // JSON for manager feedback
+  strengths       String?  // JSON array
+  improvements    String?  // JSON array
+  goals           String?  // JSON array
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user      User  @relation("PerformanceReviewedUser", fields: [userId], references: [id])
+  reviewer  User? @relation("PerformanceReviewer", fields: [reviewerId], references: [id])
+
+  @@map("performance_reviews")
+}
+
+// ─────────────────────────────────────────────────────────────
+// HRM — Lifecycle Events
+// ─────────────────────────────────────────────────────────────
+model LifecycleEvent {
+  id            String   @id @default(cuid())
+  userId        String?
+  employeeName  String
+  email         String?
+  departmentId  String?
+  type          String   @default("HIRE") // HIRE, TRANSFER, PROMOTION, RESIGNATION, TERMINATION, CONTRACT_END
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED, COMPLETED
+  effectiveDate String   // YYYY-MM-DD
+  details       String
+  fromValue     String?
+  toValue       String?
+  approvedById  String?
+  approvedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user       User?       @relation("LifecycleUser", fields: [userId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  approver   User?       @relation("LifecycleApprover", fields: [approvedById], references: [id])
+
+  @@map("lifecycle_events")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Employee Documents — Contracts, payslips, certificates, etc.
+// ─────────────────────────────────────────────────────────────
+model EmployeeDocument {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String   @default("contract") // contract, payslip, certificate, tax, other
+  date        String   // YYYY-MM-DD
+  size        String   @default("0 KB")
+  fileUrl     String?  // Path to actual file
+  description String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("employee_documents")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Announcements — Global company announcements
+// ─────────────────────────────────────────────────────────────
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  date      String   // YYYY-MM-DD
+  priority  String   @default("medium") // high, medium, low
+  category  String   @default("general") // holiday, hr, benefits, event, it, general
+  message   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("announcements")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Login Sessions — Track user login history
+// ─────────────────────────────────────────────────────────────
+model LoginSession {
+  id        String    @id @default(cuid())
+  userId    String
+  device    String
+  ip        String
+  userAgent String?
+  isCurrent Boolean   @default(false)
+  loginAt   DateTime  @default(now())
+  logoutAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("login_sessions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Investment Declarations — Employee tax-saving investment proofs
+// ─────────────────────────────────────────────────────────────
+model InvestmentDeclaration {
+  id            String   @id @default(cuid())
+  userId        String
+  category      String   // 401K, HSA, INSURANCE, EDUCATION, HOME_LOAN, CHARITY, NPS, OTHER
+  description   String
+  amount        Float
+  proofUrl      String?  // Path to uploaded proof document
+  proofName     String?  // Original file name
+  fiscalYear    String   // e.g. "2025-2026"
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewedBy    String?
+  reviewedAt    DateTime?
+  reviewComment String?
+  submittedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user     User  @relation(fields: [userId], references: [id])
+  reviewer User? @relation("InvestmentReviewer", fields: [reviewedBy], references: [id])
+
+  @@map("investment_declarations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gamification — Badges
+// ─────────────────────────────────────────────────────────────
+model Badge {
+  id          String   @id @default(cuid())
+  slug        String   @unique // e.g. "first-clock-in", "perfect-week"
+  name        String
+  description String
+  icon        String   // Lucide icon name
+  category    String   @default("ATTENDANCE") // ATTENDANCE, TASKS, ENGAGEMENT, MILESTONE, SPECIAL
+  tier        String   @default("BRONZE") // BRONZE, SILVER, GOLD, PLATINUM, DIAMOND
+  xpReward    Int      @default(10)
+  requirement String?  // JSON: { type: "streak", value: 5 } etc.
+  isSecret    Boolean  @default(false) // Hidden until earned
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+  earnedAt  DateTime @default(now())
+  isPinned  Boolean  @default(false) // User can pin favorite badges to profile
+
+  user  User   @relation(fields: [userId], references: [id])
+  badge Badge  @relation(fields: [badgeId], references: [id])
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gamification — Kudos / Peer Recognition
+// ─────────────────────────────────────────────────────────────
+model Kudos {
+  id          String   @id @default(cuid())
+  fromUserId  String
+  toUserId    String
+  message     String
+  category    String   @default("THANKS") // THANKS, TEAMWORK, INNOVATION, LEADERSHIP, GO_ABOVE_AND_BEYOND
+  xpAmount    Int      @default(5)
+  createdAt   DateTime @default(now())
+
+  fromUser User @relation("KudosSender", fields: [fromUserId], references: [id])
+  toUser   User @relation("KudosReceiver", fields: [toUserId], references: [id])
+
+  @@map("kudos")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gamification — Streaks
+// ─────────────────────────────────────────────────────────────
+model StreakRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   @default("ON_TIME") // ON_TIME, TASK_COMPLETION, DAILY_LOGIN
+  currentStreak Int    @default(0)
+  longestStreak Int    @default(0)
+  lastDate    String   // YYYY-MM-DD of the last streak day
+  milestones  String   @default("[]") // JSON array of reached milestone numbers [5, 10, 30]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, type])
+  @@map("streak_records")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Gamification — Team Challenges
+// ─────────────────────────────────────────────────────────────
+model TeamChallenge {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  type        String   @default("ON_TIME") // ON_TIME, TASK_COMPLETION, ATTENDANCE_RATE, INNOVATION
+  metric      String   // What's being measured, e.g. "on_time_arrivals"
+  targetValue Float    @default(100) // Target value to achieve
+  startDate   String   // YYYY-MM-DD
+  endDate     String   // YYYY-MM-DD
+  status      String   @default("UPCOMING") // UPCOMING, ACTIVE, COMPLETED, CANCELLED
+  reward      String?  // JSON: { type: "xp", value: 100 } or { type: "badge", badgeId: "..." }
+  departmentId String? // If null, company-wide challenge
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  department Department?         @relation(fields: [departmentId], references: [id])
+  members    TeamChallengeMember[]
+
+  @@map("team_challenges")
+}
+
+model TeamChallengeMember {
+  id          String   @id @default(cuid())
+  challengeId String
+  userId      String
+  progress    Float    @default(0) // 0-100
+  completedAt DateTime?
+  rank        Int?
+
+  challenge TeamChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User          @relation("ChallengeMember", fields: [userId], references: [id])
+
+  @@unique([challengeId, userId])
+  @@map("team_challenge_members")
+}
