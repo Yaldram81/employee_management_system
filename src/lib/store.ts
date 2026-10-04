@@ -507,7 +507,15 @@ export const useEMSStore = create<EMSStore>()(
 
       // Navigation
       activeView: 'dashboard',
-      setActiveView: (view) => set({ activeView: view }),
+      setActiveView: (view) => {
+        set({ activeView: view });
+        if (typeof window !== 'undefined') {
+          const target = view === 'dashboard' ? '/dashboard' : `/${view}`;
+          if (window.location.pathname !== target && window.location.pathname !== '/login') {
+            window.history.pushState({ view }, '', target);
+          }
+        }
+      },
 
       // Data
       departments: [],

@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter, usePathname } from 'next/navigation';
 import { useEMSStore } from '@/lib/store';
 import type { ActiveView } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -92,6 +93,8 @@ const roleBadgeColors: Record<string, string> = {
 export function Sidebar() {
   const { user, activeView, setActiveView, sidebarCollapsed, toggleSidebar, logout, settings } = useEMSStore();
   const role = user?.role || 'employee';
+  const router = useRouter();
+  const pathname = usePathname();
 
   // Module visibility: check settings.modules for each nav item
   // teams and departments cannot be disabled
@@ -99,6 +102,15 @@ export function Sidebar() {
     if (key === 'teams' || key === 'departments') return true;
     return settings.modules?.[key] !== false;
   };
+
+  // Synchronize activeView with URL pathname if directly navigated or using browser back/forward
+  useEffect(() => {
+    if (!pathname) return;
+    const cleanPath = pathname.replace(/^\//, '') as ActiveView;
+    if (cleanPath && cleanPath !== activeView && cleanPath !== ('login' as any)) {
+      setActiveView(cleanPath);
+    }
+  }, [pathname, activeView, setActiveView]);
 
   // Track which parent items are manually toggled (by id)
   const [manuallyExpanded, setManuallyExpanded] = useState<Set<string>>(new Set());
@@ -150,13 +162,18 @@ export function Sidebar() {
 
   const handleLogout = () => {
     logout();
+    router.push('/login');
     toast.success('Logged out successfully');
   };
 
   const handleNavClick = (view: ActiveView) => {
     setActiveView(view);
+    const targetPath = view === 'dashboard' ? '/dashboard' : `/${view}`;
+    if (pathname !== targetPath) {
+      router.push(targetPath);
+    }
     // Close mobile sidebar on navigation
-    if (window.innerWidth < 768) {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
       useEMSStore.setState({ sidebarCollapsed: true });
     }
   };

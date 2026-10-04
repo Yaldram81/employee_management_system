@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useEMSStore } from '@/lib/store';
 import { useUIStore } from '@/lib/ui-store';
 import { Sidebar } from './sidebar';
@@ -209,6 +210,7 @@ const viewBreadcrumbs: Record<string, string> = {
 };
 
 function Breadcrumb({ activeView }: { activeView: ActiveView }) {
+  const router = useRouter();
   // Nested breadcrumbs for sub-pages
   const parentMap: Partial<Record<ActiveView, { parent: ActiveView; parentLabel: string }>> = {
     'create-team': { parent: 'team', parentLabel: 'Teams' },
@@ -232,7 +234,10 @@ function Breadcrumb({ activeView }: { activeView: ActiveView }) {
       <Home className="h-3 w-3" />
       <span
         className="hover:text-foreground cursor-pointer transition-colors"
-        onClick={() => useEMSStore.getState().setActiveView('dashboard')}
+        onClick={() => {
+          useEMSStore.getState().setActiveView('dashboard');
+          router.push('/dashboard');
+        }}
       >
         EMS
       </span>
@@ -241,7 +246,10 @@ function Breadcrumb({ activeView }: { activeView: ActiveView }) {
         <>
           <span
             className="hover:text-foreground cursor-pointer transition-colors"
-            onClick={() => useEMSStore.getState().setActiveView(parent.parent)}
+            onClick={() => {
+              useEMSStore.getState().setActiveView(parent.parent);
+              router.push(`/${parent.parent}`);
+            }}
           >
             {parent.parentLabel}
           </span>
@@ -282,6 +290,18 @@ export function DashboardLayout() {
     if (mainRef.current) {
       mainRef.current.scrollTo({ top: 0, behavior: 'instant' });
     }
+  }, [activeView]);
+
+  // Support browser back/forward buttons (Multi-Page Navigation history)
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = (window.location.pathname.replace(/^\//, '') || 'dashboard') as ActiveView;
+      if (path && path !== activeView) {
+        useEMSStore.getState().setActiveView(path);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, [activeView]);
 
   return (

@@ -9,6 +9,7 @@ import { useEMSStore } from '@/lib/store';
 import { toast } from 'sonner';
 import confetti from 'canvas-confetti';
 import { useTheme } from 'next-themes';
+import { useRouter } from 'next/navigation';
 import {
   LogIn,
   Shield,
@@ -241,6 +242,7 @@ export function LoginScreen() {
 
   const login = useEMSStore((s) => s.login);
   const { theme, setTheme } = useTheme();
+  const router = useRouter();
 
   const mounted = useSyncExternalStore(
     () => () => {},
@@ -318,6 +320,7 @@ export function LoginScreen() {
           } catch {
             // Ignore storage errors
           }
+          router.push('/dashboard');
         } else {
           toast.error('Invalid credentials. Check your email/password or use demo roles.');
         }
@@ -327,7 +330,7 @@ export function LoginScreen() {
         setLoading(false);
       }
     },
-    [email, password, rememberMe, login]
+    [email, password, rememberMe, login, router]
   );
 
   const handleDemoLogin = useCallback(
@@ -342,6 +345,7 @@ export function LoginScreen() {
         if (success) {
           triggerConfetti();
           toast.success(`Welcome, ${demo.name}! Starting ${demo.label} session.`);
+          router.push('/dashboard');
         } else {
           toast.error('Demo authentication failed. Database may be initializing.');
         }
@@ -351,7 +355,7 @@ export function LoginScreen() {
         setLoading(false);
       }
     },
-    [login]
+    [login, router]
   );
 
   const handleAutofill = useCallback((role: string) => {

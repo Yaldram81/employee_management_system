@@ -17,6 +17,7 @@ import { Bell, LogOut, User, Shield, ShieldCheck, Users, Search, Sun, Moon, Pane
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { useTheme } from 'next-themes';
+import { useRouter } from 'next/navigation';
 
 const viewTitles: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -48,6 +49,7 @@ export function Header() {
   const companyName = (settings.organization as Record<string, unknown>)?.companyName as string || 'EMS';
   const companyLogoUrl = (settings.organization as Record<string, unknown>)?.companyLogoUrl as string || '';
   const { setTheme, theme } = useTheme();
+  const router = useRouter();
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -56,6 +58,7 @@ export function Header() {
 
   const handleLogout = () => {
     logout();
+    router.push('/login');
     toast.success('Logged out successfully');
   };
 
