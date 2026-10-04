@@ -1,3 +1,81 @@
-/.env
-/.next
+# Dependencies
 /node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Next.js build & outputs
+/.next/
+/out/
+.turbo/
+build/
+dist/
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# Environment variables & secrets (keep .env.example tracked)
+.env
+.env*.local
+.env.production
+.env.development
+.env.test
+!.env.example
+
+# Local SQLite databases & journals
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Debug & runtime logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Testing & Coverage
+coverage/
+*.lcov
+.nyc_output
+cypress/videos/
+cypress/screenshots/
+
+# Editor & IDE configs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Temporary files & caches
+.eslintcache
+.stylelintcache
+*.tmp
+*.temp
+.cache/
